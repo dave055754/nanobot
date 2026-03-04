@@ -182,7 +182,6 @@ class AgentLoop:
 
         while iteration < self.max_iterations:
             iteration += 1
-
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
@@ -190,6 +189,7 @@ class AgentLoop:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
+            logger.info("response call: {}, {} {}", response.content, response.tool_calls, response.reasoning_content)
 
             if response.has_tool_calls:
                 if on_progress:
@@ -343,7 +343,7 @@ class AgentLoop:
                                   content=final_content or "Background task completed.")
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
+        logger.info("Processing message from {}:{}: {}, {}", msg.channel, msg.sender_id, preview, msg.chat_id)
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
@@ -358,7 +358,7 @@ class AgentLoop:
                     snapshot = session.messages[session.last_consolidated:]
                     if snapshot:
                         temp = Session(key=session.key)
-                        temp.messages = list(snapshot)
+                        temp.messages = list[dict[str, Any]](snapshot)
                         if not await self._consolidate_memory(temp, archive_all=True):
                             return OutboundMessage(
                                 channel=msg.channel, chat_id=msg.chat_id,

@@ -13,6 +13,8 @@ from litellm import acompletion
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
 
+from loguru import logger
+
 
 # Standard OpenAI chat-completion message keys plus reasoning_content for
 # thinking-enabled models (Kimi k2.5, DeepSeek-R1, etc.).
@@ -227,7 +229,7 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        
+        logger.info("LiteLLMProvider.chat kwargs: {}", kwargs)
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)

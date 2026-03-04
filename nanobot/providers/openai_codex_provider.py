@@ -55,6 +55,7 @@ class OpenAICodexProvider(LLMProvider):
             body["tools"] = _convert_tools(tools)
 
         url = DEFAULT_CODEX_URL
+        logger.info("OpenAICodexProvider.chat body: {}", body)
 
         try:
             try:
