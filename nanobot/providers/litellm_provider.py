@@ -180,6 +180,7 @@ class LiteLLMProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request via LiteLLM.
@@ -190,6 +191,7 @@ class LiteLLMProvider(LLMProvider):
             model: Model identifier (e.g., 'anthropic/claude-sonnet-4-5').
             max_tokens: Maximum tokens in response.
             temperature: Sampling temperature.
+            response_format: Optional response format (e.g., {"type": "json_object"}).
         
         Returns:
             LLMResponse with content and/or tool calls.
@@ -229,7 +231,11 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        logger.info("LiteLLMProvider.chat kwargs: {}", kwargs)
+        
+        # Apply response format (e.g., JSON mode)
+        if response_format:
+            kwargs["response_format"] = response_format
+        
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)

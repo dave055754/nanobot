@@ -23,9 +23,9 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
-        """Build the system prompt from identity, bootstrap files, memory, and skills."""
-        parts = [self._get_identity()]
+    def build_system_prompt(self, skill_names: list[str] | None = None, json_mode: bool = False) -> str:
+        """Build system prompt from identity, bootstrap files, memory, and skills."""
+        parts = [self._get_identity(json_mode)]
 
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
@@ -45,20 +45,20 @@ class ContextBuilder:
         if skills_summary:
             parts.append(f"""# Skills
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+The following skills extend your capabilities. To use a skill, read its SKILL.md file using :read_file tool.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
 {skills_summary}""")
 
         return "\n\n---\n\n".join(parts)
     
-    def _get_identity(self) -> str:
+    def _get_identity(self, json_mode: bool = False) -> str:
         """Get the core identity section."""
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
         
-        return f"""# nanobot 🐈
+        identity = f"""# nanobot 🐈
 
 You are nanobot, a helpful AI assistant.
 
@@ -76,9 +76,25 @@ Your workspace is at: {workspace_path}
 - Before modifying a file, read it first. Do not assume files or directories exist.
 - After writing or editing a file, re-read it if accuracy matters.
 - If a tool call fails, analyze the error before retrying with a different approach.
-- Ask for clarification when the request is ambiguous.
+- Ask for clarification when request is ambiguous."""
+        
+        if json_mode:
+            identity += """
 
-Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel."""
+## JSON Mode
+You MUST respond with valid JSON format only. Your response should be a JSON object with the following structure:
+{
+  "valid": true/false,
+  "errors": [],
+  "data": {}
+}
+Do not include any text outside the JSON object."""
+        else:
+            identity += """
+
+Reply directly with text for conversations. Only use 'message' tool to send to a specific chat channel."""
+        
+        return identity
 
     @staticmethod
     def _build_runtime_context(channel: str | None, chat_id: str | None) -> str:
@@ -110,10 +126,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        json_mode: bool = False,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         return [
-            {"role": "system", "content": self.build_system_prompt(skill_names)},
+            {"role": "system", "content": self.build_system_prompt(skill_names, json_mode)},
             *history,
             {"role": "user", "content": self._build_runtime_context(channel, chat_id)},
             {"role": "user", "content": self._build_user_content(current_message, media)},

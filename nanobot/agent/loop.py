@@ -62,6 +62,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        json_mode: bool = False,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -77,6 +78,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.json_mode = json_mode
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -182,12 +184,16 @@ class AgentLoop:
 
         while iteration < self.max_iterations:
             iteration += 1
+            
+            response_format = {"type": "json_object"} if self.json_mode else None
+            
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                response_format=response_format,
             )
             logger.info("response call: {}, {} {}", response.content, response.tool_calls, response.reasoning_content)
 
@@ -335,6 +341,7 @@ class AgentLoop:
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
+                json_mode=self.json_mode,
             )
             final_content, _, all_msgs = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
@@ -415,6 +422,7 @@ class AgentLoop:
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
+            json_mode=self.json_mode,
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
