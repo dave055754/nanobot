@@ -92,6 +92,13 @@ def validate_ledger(data):
     except ValueError:
         errors.append("汇率日期格式无效，应为 YYYY-MM-DD")
     
+    # 业务逻辑校验：当币种相同时，汇率需要等于1.0且交易币金额应与记账币金额相等
+    if enter_current == account_current:
+        if exchange_rate != 1.0:
+            errors.append(f"币种相同时，汇率必须等于1.0，当前汇率为{exchange_rate}")
+        if enter_cr != account_cr:
+            errors.append(f"币种相同时，交易币金额({enter_cr})应与记账币金额({account_cr})相等")
+    
     # 构建返回结果
     result = {
         "valid": len(errors) == 0,
