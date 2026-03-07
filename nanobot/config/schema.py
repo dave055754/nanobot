@@ -221,17 +221,26 @@ class AgentDefaults(Base):
 
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
-    provider: str = "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
+    provider: str = "auto"
     max_tokens: int = 8192
     temperature: float = 0.1
     max_tool_iterations: int = 40
     memory_window: int = 100
 
 
+class SecurityConfig(Base):
+    """Security configuration for nanobot."""
+
+    level: str = "strict"
+    enable_audit_log: bool = True
+    audit_log_dir: str = "audit"
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
 
 class ProviderConfig(Base):

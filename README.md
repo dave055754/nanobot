@@ -20,6 +20,7 @@
 
 ## 📢 News
 
+- **2026-03-06** ✨ 新增 ledger-validation 技能（分录明细账校验）和 JSON 模式支持
 - **2026-02-24** 🚀 Released **v0.1.4.post2** — a reliability-focused release with a redesigned heartbeat, prompt cache optimization, and hardened provider & channel stability. See [release notes](https://github.com/HKUDS/nanobot/releases/tag/v0.1.4.post2) for details.
 - **2026-02-23** 🔧 Virtual tool-call heartbeat, prompt cache optimization, Slack mrkdwn fixes.
 - **2026-02-22** 🛡️ Slack thread isolation, Discord typing fix, agent reliability improvements.
@@ -863,20 +864,84 @@ Use `toolTimeout` to override the default 30s per-call timeout for slow servers:
 
 MCP tools are automatically discovered and registered on startup. The LLM can use them alongside built-in tools — no extra configuration needed.
 
-
-
-
-### Security
+## 🔒 Production Security
 
 > [!TIP]
-> For production deployments, set `"restrictToWorkspace": true` in your config to sandbox the agent.
+> nanobot now supports **production environment security hardening** to ensure safe operation in production.
+
+### Security Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `agents.security.level` | `strict` | Security level: `basic` (development), `strict` (production), `readonly` (maximum security) |
+| `agents.security.enable_audit_log` | `true` | Enable audit logging for all operations |
+| `agents.security.audit_log_dir` | `audit` | Directory for audit log storage |
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
 | `channels.*.allowFrom` | `[]` (allow all) | Whitelist of user IDs. Empty = allow everyone; non-empty = only listed users can interact. |
 
+### Security Levels
+
+- **basic (Basic Mode)**: For development environments. Allows executing commands defined in skills, basic dangerous command blacklist.
+- **strict (Strict Mode)**: Recommended for production. Only allows executing Python scripts explicitly defined in skills, strict delete/update operation blacklist, comprehensive audit logging, workspace restrictions.
+- **readonly (Read-Only Mode)**: Maximum security level. Prohibits all write operations, only allows read and query operations.
+
+### Security Features
+
+✅ **Python Script Whitelist**: Only execute Python scripts explicitly defined in skills
+✅ **Shell Command Blacklist**: Prohibit executing dangerous operations like delete, format, package installation
+✅ **File Operation Security**: Workspace restrictions and system directory protection
+✅ **Comprehensive Audit Logging**: All command executions and file operations are logged
+✅ **Audit Log Query**: Use `audit_log` tool to query security violations and operation records
+
+### Configuration Examples
+
+**Production (Recommended):**
+```json
+{
+  "agents": {
+    "security": {
+      "level": "strict",
+      "enable_audit_log": true,
+      "audit_log_dir": "audit"
+    }
+  }
+}
+```
+
+**High Security:**
+```json
+{
+  "agents": {
+    "security": {
+      "level": "readonly",
+      "enable_audit_log": true,
+      "audit_log_dir": "audit"
+    }
+  }
+}
+```
+
+### Audit Log Query
+
+```bash
+# Query security violations
+nanobot agent -m "Query security violations: audit_log(query_type='violations')"
+
+# Query recent logs
+nanobot agent -m "Query recent logs: audit_log(query_type='recent')"
+
+# Query all logs
+nanobot agent -m "Query all logs: audit_log(query_type='all')"
+```
+
+### Audit Log Location
+
+All operation logs are saved to: `~/.nanobot/workspace/audit/audit_YYYYMMDD.log`
+
+### Security Features Details
+
+Please see [SECURITY_IMPLEMENTATION_SUMMARY.md](./SECURITY_IMPLEMENTATION_SUMMARY.md) for complete security feature documentation and implementation details.
 
 ## CLI Reference
 
@@ -887,6 +952,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | `nanobot agent` | Interactive chat mode |
 | `nanobot agent --no-markdown` | Show plain-text replies |
 | `nanobot agent --logs` | Show runtime logs during chat |
+| `nanobot agent --json` | Enable JSON mode for structured output |
 | `nanobot gateway` | Start the gateway |
 | `nanobot status` | Show status |
 | `nanobot provider login openai-codex` | OAuth login for providers |
@@ -1024,6 +1090,55 @@ If you edit the `.service` file itself, run `systemctl --user daemon-reload` bef
 > loginctl enable-linger $USER
 > ```
 
+## 🎯 Skills
+
+nanobot 支持可扩展的技能系统，当前包含以下内置技能：
+
+### ledger-validation（分录明细账校验）
+
+用于校验财务分录数据的有效性，包括金额、汇率、币种和日期的校验。
+
+**功能特性：**
+- 金额校验：确保金额非负
+- 汇率校验：确保汇率大于0
+- 币种校验：验证币种代码的有效性
+- 日期校验：验证日期格式的正确性
+
+**使用示例：**
+
+通过 CLI 直接调用：
+```bash
+python3 nanobot/skills/ledger-validation/scripts/validate_ledger.py '{
+  "applicationCode": "RMS",
+  "enter_CR": 12345.67,
+  "account_CR": 12345.67,
+  "exchangeRateVal": 1.0,
+  "exchangeDate": "2026-03-06",
+  "enter_current": "RMB",
+  "account_current": "CNY"
+}'
+```
+
+**输出格式：**
+```json
+{
+  "valid": true,
+  "errors": [],
+  "data": {
+    "applicationCode": "RMS",
+    "enter_CR": 12345.67,
+    "account_CR": 12345.67,
+    "exchangeRateVal": 1.0,
+    "exchangeDate": "2026-03-06",
+    "enter_current": "RMB",
+    "account_current": "CNY"
+  }
+}
+```
+
+**支持的币种：**
+RMB, CNY, USD, EUR, JPY, GBP, HKD, AUD, CAD, SGD, CHF, SEK, NZD, KRW, THB, MYR, IDR, INR, PHP, VND
+
 ## 📁 Project Structure
 
 ```
@@ -1035,7 +1150,7 @@ nanobot/
 │   ├── skills.py   #    Skills loader
 │   ├── subagent.py #    Background task execution
 │   └── tools/      #    Built-in tools (incl. spawn)
-├── skills/         # 🎯 Bundled skills (github, weather, tmux...)
+├── skills/         # 🎯 Bundled skills (ledger-validation, github, weather, tmux...)
 ├── channels/       # 📱 Chat channel integrations
 ├── bus/            # 🚌 Message routing
 ├── cron/           # ⏰ Scheduled tasks

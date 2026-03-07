@@ -1,12 +1,14 @@
-"""Shell execution tool."""
+"""Shell execution tool with security enhancements."""
 
 import asyncio
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.security_guard import SecurityGuard, SecurityLevel
+from nanobot.agent.audit_logger import AuditLogger
 
 
 class ExecTool(Tool):
@@ -20,6 +22,8 @@ class ExecTool(Tool):
         allow_patterns: list[str] | None = None,
         restrict_to_workspace: bool = False,
         path_append: str = "",
+        security_guard: Optional[SecurityGuard] = None,
+        audit_logger: Optional[AuditLogger] = None,
     ):
         self.timeout = timeout
         self.working_dir = working_dir
@@ -37,6 +41,8 @@ class ExecTool(Tool):
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
         self.path_append = path_append
+        self.security_guard = security_guard
+        self.audit_logger = audit_logger
     
     @property
     def name(self) -> str:
@@ -44,7 +50,7 @@ class ExecTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Execute a shell command and return its output. Use with caution."
+        return "Execute a shell command and return its output. Security restrictions apply."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -65,10 +71,34 @@ class ExecTool(Tool):
     
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         cwd = working_dir or self.working_dir or os.getcwd()
+
+        if self.security_guard:
+            is_safe, reason = self.security_guard.is_command_safe(command)
+            if not is_safe:
+                if self.audit_logger:
+                    self.audit_logger.log_command(
+                        command=command,
+                        allowed=False,
+                        reason=reason,
+                    )
+                return f"Error: {reason}"
+
         guard_error = self._guard_command(command, cwd)
         if guard_error:
+            if self.audit_logger:
+                self.audit_logger.log_command(
+                    command=command,
+                    allowed=False,
+                    reason=guard_error,
+                )
             return guard_error
-        
+
+        if self.audit_logger:
+            self.audit_logger.log_command(
+                command=command,
+                allowed=True,
+            )
+
         env = os.environ.copy()
         if self.path_append:
             env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
@@ -81,7 +111,7 @@ class ExecTool(Tool):
                 cwd=cwd,
                 env=env,
             )
-            
+
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),
@@ -89,38 +119,49 @@ class ExecTool(Tool):
                 )
             except asyncio.TimeoutError:
                 process.kill()
-                # Wait for the process to fully terminate so pipes are
-                # drained and file descriptors are released.
                 try:
                     await asyncio.wait_for(process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     pass
-                return f"Error: Command timed out after {self.timeout} seconds"
-            
+                result = f"Error: Command timed out after {self.timeout} seconds"
+                if self.audit_logger:
+                    self.audit_logger.log_command(
+                        command=command,
+                        allowed=True,
+                        reason=result,
+                    )
+                return result
+
             output_parts = []
-            
+
             if stdout:
                 output_parts.append(stdout.decode("utf-8", errors="replace"))
-            
+
             if stderr:
                 stderr_text = stderr.decode("utf-8", errors="replace")
                 if stderr_text.strip():
                     output_parts.append(f"STDERR:\n{stderr_text}")
-            
+
             if process.returncode != 0:
                 output_parts.append(f"\nExit code: {process.returncode}")
-            
+
             result = "\n".join(output_parts) if output_parts else "(no output)"
-            
-            # Truncate very long output
+
             max_len = 10000
             if len(result) > max_len:
                 result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
-            
+
             return result
-            
+
         except Exception as e:
-            return f"Error executing command: {str(e)}"
+            error_msg = f"Error executing command: {str(e)}"
+            if self.audit_logger:
+                self.audit_logger.log_command(
+                    command=command,
+                    allowed=True,
+                    reason=error_msg,
+                )
+            return error_msg
 
     def _guard_command(self, command: str, cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from loguru import logger
-
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
@@ -21,6 +20,10 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.tools.audit import AuditLogTool
+from nanobot.agent.security_guard import SecurityGuard, SecurityLevel
+from nanobot.agent.audit_logger import AuditLogger
+from nanobot.agent.skills_command_parser import SkillCommandParser
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
@@ -63,6 +66,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         json_mode: bool = False,
+        security_level: str = "strict",
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -83,6 +87,27 @@ class AgentLoop:
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
+
+        self.security_level = SecurityLevel(security_level.lower())
+        self.security_guard = SecurityGuard(
+            security_level=self.security_level,
+            workspace=workspace,
+        )
+        self.audit_logger = AuditLogger(workspace)
+
+        self.command_parser = SkillCommandParser(self.context.skills)
+        self.command_parser.parse_all_skills()
+
+        self.security_guard.set_python_script_whitelist(
+            self.command_parser.get_python_scripts()
+        )
+        self.security_guard.set_allowed_tools(
+            self.command_parser.get_allowed_tools()
+        )
+        self.security_guard.set_skill_commands(
+            self.command_parser.skill_commands
+        )
+
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -100,28 +125,35 @@ class AgentLoop:
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
         self._mcp_connecting = False
-        self._consolidating: set[str] = set()  # Session keys with consolidation in progress
-        self._consolidation_tasks: set[asyncio.Task] = set()  # Strong refs to in-flight tasks
+        self._consolidating: set[str] = set()
+        self._consolidation_tasks: set[asyncio.Task] = set()
         self._consolidation_locks: dict[str, asyncio.Lock] = {}
-        self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
-        self._processing_lock = asyncio.Lock()
+        self._active_tasks: dict[str, list[asyncio.Task]] = {}
         self._register_default_tools()
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
+            self.tools.register(cls(
+                workspace=self.workspace,
+                allowed_dir=allowed_dir,
+                security_guard=self.security_guard,
+                audit_logger=self.audit_logger,
+            ))
         self.tools.register(ExecTool(
             working_dir=str(self.workspace),
             timeout=self.exec_config.timeout,
             restrict_to_workspace=self.restrict_to_workspace,
             path_append=self.exec_config.path_append,
+            security_guard=self.security_guard,
+            audit_logger=self.audit_logger,
         ))
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
+        self.tools.register(AuditLogTool(self.workspace))
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
 
@@ -287,26 +319,25 @@ class AgentLoop:
         ))
 
     async def _dispatch(self, msg: InboundMessage) -> None:
-        """Process a message under the global lock."""
-        async with self._processing_lock:
-            try:
-                response = await self._process_message(msg)
-                if response is not None:
-                    await self.bus.publish_outbound(response)
-                elif msg.channel == "cli":
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id,
-                        content="", metadata=msg.metadata or {},
-                    ))
-            except asyncio.CancelledError:
-                logger.info("Task cancelled for session {}", msg.session_key)
-                raise
-            except Exception:
-                logger.exception("Error processing message for session {}", msg.session_key)
+        """Process a message without global lock to support session-level concurrency."""
+        try:
+            response = await self._process_message(msg)
+            if response is not None:
+                await self.bus.publish_outbound(response)
+            elif msg.channel == "cli":
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
-                    content="Sorry, I encountered an error.",
+                    content="", metadata=msg.metadata or {},
                 ))
+        except asyncio.CancelledError:
+            logger.info("Task cancelled for session {}", msg.session_key)
+            raise
+        except Exception:
+            logger.exception("Error processing message for session {}", msg.session_key)
+            await self.bus.publish_outbound(OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="Sorry, I encountered an error.",
+            ))
 
     async def close_mcp(self) -> None:
         """Close MCP connections."""

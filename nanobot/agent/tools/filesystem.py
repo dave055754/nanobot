@@ -2,9 +2,11 @@
 
 import difflib
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.security_guard import SecurityGuard
+from nanobot.agent.audit_logger import AuditLogger
 
 
 def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | None = None) -> Path:
@@ -24,9 +26,17 @@ def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | 
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        allowed_dir: Path | None = None,
+        security_guard: Optional[SecurityGuard] = None,
+        audit_logger: Optional[AuditLogger] = None,
+    ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self.security_guard = security_guard
+        self.audit_logger = audit_logger
 
     @property
     def name(self) -> str:
@@ -50,6 +60,28 @@ class ReadFileTool(Tool):
         }
     
     async def execute(self, path: str, **kwargs: Any) -> str:
+        if self.security_guard:
+            is_safe, reason = self.security_guard.is_file_operation_safe(
+                operation="read",
+                file_path=path,
+            )
+            if not is_safe:
+                if self.audit_logger:
+                    self.audit_logger.log_file_operation(
+                        operation="read",
+                        file_path=path,
+                        allowed=False,
+                        reason=reason,
+                    )
+                return f"Error: {reason}"
+
+        if self.audit_logger:
+            self.audit_logger.log_file_operation(
+                operation="read",
+                file_path=path,
+                allowed=True,
+            )
+
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -68,9 +100,17 @@ class ReadFileTool(Tool):
 class WriteFileTool(Tool):
     """Tool to write content to a file."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        allowed_dir: Path | None = None,
+        security_guard: Optional[SecurityGuard] = None,
+        audit_logger: Optional[AuditLogger] = None,
+    ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self.security_guard = security_guard
+        self.audit_logger = audit_logger
 
     @property
     def name(self) -> str:
@@ -78,7 +118,7 @@ class WriteFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Write content to a file at the given path. Creates parent directories if needed."
+        return "Write content to a file at a given path. Security restrictions apply."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -98,6 +138,28 @@ class WriteFileTool(Tool):
         }
     
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+        if self.security_guard:
+            is_safe, reason = self.security_guard.is_file_operation_safe(
+                operation="write",
+                file_path=path,
+            )
+            if not is_safe:
+                if self.audit_logger:
+                    self.audit_logger.log_file_operation(
+                        operation="write",
+                        file_path=path,
+                        allowed=False,
+                        reason=reason,
+                    )
+                return f"Error: {reason}"
+
+        if self.audit_logger:
+            self.audit_logger.log_file_operation(
+                operation="write",
+                file_path=path,
+                allowed=True,
+            )
+
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,9 +174,17 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        allowed_dir: Path | None = None,
+        security_guard: Optional[SecurityGuard] = None,
+        audit_logger: Optional[AuditLogger] = None,
+    ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self.security_guard = security_guard
+        self.audit_logger = audit_logger
 
     @property
     def name(self) -> str:
@@ -122,7 +192,7 @@ class EditFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
+        return "Edit a file by replacing old_text with new_text. Security restrictions apply."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -146,6 +216,28 @@ class EditFileTool(Tool):
         }
     
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+        if self.security_guard:
+            is_safe, reason = self.security_guard.is_file_operation_safe(
+                operation="edit",
+                file_path=path,
+            )
+            if not is_safe:
+                if self.audit_logger:
+                    self.audit_logger.log_file_operation(
+                        operation="edit",
+                        file_path=path,
+                        allowed=False,
+                        reason=reason,
+                    )
+                return f"Error: {reason}"
+
+        if self.audit_logger:
+            self.audit_logger.log_file_operation(
+                operation="edit",
+                file_path=path,
+                allowed=True,
+            )
+
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -156,11 +248,9 @@ class EditFileTool(Tool):
             if old_text not in content:
                 return self._not_found_message(old_text, content, path)
 
-            # Count occurrences
             count = content.count(old_text)
-            if count > 1:
+            if count >1:
                 return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
-
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
 
@@ -196,9 +286,17 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """Tool to list directory contents."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        allowed_dir: Path | None = None,
+        security_guard: Optional[SecurityGuard] = None,
+        audit_logger: Optional[AuditLogger] = None,
+    ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self.security_guard = security_guard
+        self.audit_logger = audit_logger
 
     @property
     def name(self) -> str:
@@ -222,6 +320,28 @@ class ListDirTool(Tool):
         }
     
     async def execute(self, path: str, **kwargs: Any) -> str:
+        if self.security_guard:
+            is_safe, reason = self.security_guard.is_file_operation_safe(
+                operation="list",
+                file_path=path,
+            )
+            if not is_safe:
+                if self.audit_logger:
+                    self.audit_logger.log_file_operation(
+                        operation="list",
+                        file_path=path,
+                        allowed=False,
+                        reason=reason,
+                    )
+                return f"Error: {reason}"
+
+        if self.audit_logger:
+            self.audit_logger.log_file_operation(
+                operation="list",
+                file_path=path,
+                allowed=True,
+            )
+
         try:
             dir_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not dir_path.exists():
