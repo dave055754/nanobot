@@ -260,10 +260,26 @@ class MqsChannel(BaseChannel):
         """Prepare outbound message for MQS produce endpoint."""
         metadata = msg.metadata or {}
 
+        business_body = msg.content or ""
+        message_type = metadata.get("messageType", "TEXT")
+
+        if msg.is_json:
+            try:
+                business_body = json.loads(business_body)
+                message_type = "JSON"
+            except (json.JSONDecodeError, TypeError):
+                message_type = "TEXT"
+        elif self.config.auto_detect_json:
+            try:
+                business_body = json.loads(business_body)
+                message_type = "JSON"
+            except (json.JSONDecodeError, TypeError):
+                message_type = "TEXT"
+
         message_body = {
             "businessType": metadata.get("businessType", ""),
-            "messageType": metadata.get("messageType", "JSON"),
-            "businessBody": msg.content or "",
+            "messageType": message_type,
+            "businessBody": business_body,
             "source": metadata.get("source", self.config.appid),
             "appid": self.config.appid,
             "requestId": metadata.get("requestId", ""),

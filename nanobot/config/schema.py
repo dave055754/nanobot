@@ -196,6 +196,7 @@ class MqsConfig(Base):
     appkey: str = ""  # 应用密钥
     msg_group_id: str = ""  # 消息组ID
     poll_interval_seconds: int = 1  # 消息轮询间隔（秒）
+    auto_detect_json: bool = True  # 是否自动检测JSON内容
 
 
 class ChannelsConfig(Base):

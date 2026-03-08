@@ -377,8 +377,10 @@ class AgentLoop:
             final_content, _, all_msgs = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
+            is_json = self._is_json_content(final_content or "")
             return OutboundMessage(channel=channel, chat_id=chat_id,
-                                  content=final_content or "Background task completed.")
+                                  content=final_content or "Background task completed.",
+                                  is_json=is_json)
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}, {}", msg.channel, msg.sender_id, preview, msg.chat_id)
@@ -479,9 +481,10 @@ class AgentLoop:
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
+        is_json = self._is_json_content(final_content or "")
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,
-            metadata=msg.metadata or {},
+            metadata=msg.metadata or {}, is_json=is_json,
         )
 
     def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
@@ -507,6 +510,16 @@ class AgentLoop:
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
         session.updated_at = datetime.now()
+
+    def _is_json_content(self, content: str) -> bool:
+        """检测内容是否为有效的JSON字符串"""
+        if not content:
+            return False
+        try:
+            json.loads(content)
+            return True
+        except (json.JSONDecodeError, TypeError):
+            return False
 
     async def _consolidate_memory(self, session, archive_all: bool = False) -> bool:
         """Delegate to MemoryStore.consolidate(). Returns True on success."""
