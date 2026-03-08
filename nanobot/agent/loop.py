@@ -67,6 +67,7 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         json_mode: bool = False,
         security_level: str = "strict",
+        session_ttl_minutes: int = 30,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -83,9 +84,10 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self.json_mode = json_mode
+        self.session_ttl_minutes = session_ttl_minutes
 
         self.context = ContextBuilder(workspace)
-        self.sessions = session_manager or SessionManager(workspace)
+        self.sessions = session_manager or SessionManager(workspace, session_ttl_minutes)
         self.tools = ToolRegistry()
 
         self.security_level = SecurityLevel(security_level.lower())
@@ -287,6 +289,7 @@ class AgentLoop:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
         await self._connect_mcp()
+        await self.sessions.start_cleanup_task()
         logger.info("Agent loop started")
 
         while self._running:
@@ -351,6 +354,7 @@ class AgentLoop:
     def stop(self) -> None:
         """Stop the agent loop."""
         self._running = False
+        asyncio.create_task(self.sessions.stop_cleanup_task())
         logger.info("Agent loop stopping")
 
     async def _process_message(

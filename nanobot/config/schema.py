@@ -227,6 +227,7 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     max_tool_iterations: int = 40
     memory_window: int = 100
+    session_ttl_minutes: int = 30  # Session 失效时间（分钟），0 表示不失效
 
 
 class SecurityConfig(Base):
